@@ -39,9 +39,9 @@ def problem_green_radius_m() -> float:
 def target_density_per_ha() -> dict:
     """Целевая плотность деревьев на гектар по категориям зон (рабочие значения, не норматив)."""
     return {
-        "park": _float("TARGET_TREES_PER_HA_PARK", 120.0),
-        "problem": _float("TARGET_TREES_PER_HA_PROBLEM", 120.0),
-        "zone": _float("TARGET_TREES_PER_HA_ZONE", 120.0),
+        "park": _float("TARGET_TREES_PER_HA_PARK", 60.0),
+        "problem": _float("TARGET_TREES_PER_HA_PROBLEM", 60.0),
+        "zone": _float("TARGET_TREES_PER_HA_ZONE", 60.0),
         # лесные массивы — природные, дефицит посадок для них не считается
     }
 
