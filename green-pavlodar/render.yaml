@@ -1,14 +1,13 @@
-# Blueprint для Render (https://render.com): сайт + база данных, всё создаётся одной кнопкой.
 databases:
   - name: green-pavlodar-db
-    plan: free            # бесплатная база Render живёт 30 дней с момента создания
+    plan: free
 
 services:
   - type: web
     name: green-pavlodar
     runtime: docker
-   dockerfilePath: ./green-pavlodar/Dockerfile
-   dockerContext: ./green-pavlodar
+    dockerfilePath: ./green-pavlodar/Dockerfile
+    dockerContext: ./green-pavlodar
     plan: free
     healthCheckPath: /api/v1/health
     envVars:
@@ -17,6 +16,6 @@ services:
           name: green-pavlodar-db
           property: connectionString
       - key: LLM_PROVIDER
-        value: groq       # бесплатный ИИ; ключ LLM_API_KEY добавьте в панели Render (см. DEPLOY.md)
+        value: groq           # бесплатный ИИ; ключ LLM_API_KEY добавьте в панели Render (см. DEPLOY.md)
       - key: EDITING_ENABLED
-        value: "true"     # поставьте false, чтобы сайт стал «только для просмотра»
+        value: "true"    # поставьте false, чтобы сайт стал «только для просмотра» 
