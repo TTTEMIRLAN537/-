@@ -1,9 +1,0 @@
-{
-  "_note": "Справочник видов. Значения перенесены из исходного прототипа и НЕ верифицированы по ботаническим источникам — перед использованием в реальных проектах сверьте их со специалистом (агроном/дендролог). Цены в тенге за саженец; co2_yr — кг CO2 в год на дерево; crown_sqm — проекция кроны, м².",
-  "plants": [
-    {"id": 1, "name_ru": "Вяз приземистый (Карагач)", "type": "Tree", "min_ph": 6.0, "max_ph": 8.5, "max_salinity": 5.5, "drought_res": 5, "gas_res": 5, "is_allergen": false, "unit_cost": 6000, "co2_yr": 28.0, "crown_sqm": 15.0},
-    {"id": 2, "name_ru": "Тополь белый (безпуховый)", "type": "Tree", "min_ph": 6.5, "max_ph": 8.0, "max_salinity": 4.0, "drought_res": 4, "gas_res": 5, "is_allergen": false, "unit_cost": 8500, "co2_yr": 45.0, "crown_sqm": 25.0},
-    {"id": 3, "name_ru": "Сосна обыкновенная", "type": "Tree", "min_ph": 5.5, "max_ph": 7.2, "max_salinity": 1.5, "drought_res": 4, "gas_res": 2, "is_allergen": false, "unit_cost": 25000, "co2_yr": 35.0, "crown_sqm": 20.0},
-    {"id": 4, "name_ru": "Кизильник блестящий", "type": "Shrub", "min_ph": 6.0, "max_ph": 8.2, "max_salinity": 3.0, "drought_res": 4, "gas_res": 4, "is_allergen": false, "unit_cost": 4200, "co2_yr": 6.5, "crown_sqm": 2.0}
-  ]
-}
