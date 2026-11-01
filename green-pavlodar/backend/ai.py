@@ -8,6 +8,7 @@
 Ответ модели — недоверенные данные: всё валидируется, в интерфейс попадает только проверенное.
 """
 import json
+import logging
 import os
 import re
 import urllib.error
@@ -15,6 +16,8 @@ import urllib.request
 from typing import Callable, Mapping, Optional, Tuple
 
 import config
+
+log = logging.getLogger("uvicorn.error")
 
 Transport = Callable[[str, dict, bytes, float], Tuple[int, bytes]]
 
@@ -60,6 +63,17 @@ class LLMClient:
     def available(self) -> bool:
         return bool(self.api_key)
 
+    def _post(self, url: str, headers: dict, body: bytes) -> Tuple[int, bytes]:
+        """Любой сбой запроса (в т.ч. недопустимые символы в ключе) превращается в AIUnavailable, а не в ошибку 500."""
+        try:
+            return self._transport(url, headers, body, self.timeout)
+        except AIError:
+            raise
+        except Exception as e:
+            # Текст исходной ошибки НЕ показываем: например, у http.client он содержит значение заголовка, то есть ключ API.
+            hint = " — проверьте, что ключ вставлен без лишних символов" if isinstance(e, (ValueError, UnicodeError)) else ""
+            raise AIUnavailable(f"Ошибка запроса к ИИ ({type(e).__name__}){hint}") from e
+
     def complete(self, system: str, user: str, max_tokens: int = 600) -> str:
         if not self.available:
             raise AIUnavailable("ANTHROPIC_API_KEY не задан")
@@ -74,7 +88,7 @@ class LLMClient:
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
         }
-        status, raw = self._transport(self.url, headers, body, self.timeout)
+        status, raw = self._post(self.url, headers, body)
         if status != 200:
             raise AIUnavailable(f"Сервис ИИ вернул HTTP {status}")
         try:
@@ -98,7 +112,7 @@ class OpenAICompatClient(LLMClient):
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         }).encode("utf-8")
         headers = {"content-type": "application/json", "authorization": f"Bearer {self.api_key}"}
-        status, raw = self._transport(self.url.rstrip("/") + "/chat/completions", headers, body, self.timeout)
+        status, raw = self._post(self.url.rstrip("/") + "/chat/completions", headers, body)
         if status != 200:
             raise AIUnavailable(f"Сервис ИИ вернул HTTP {status}")
         try:
@@ -121,10 +135,18 @@ def make_client(env: Optional[Mapping[str, str]] = None, transport: Optional[Tra
     LLM_PROVIDER=openai-compatible  + LLM_API_KEY, LLM_BASE_URL, LLM_MODEL (Gemini, OpenRouter, Mistral…)
     LLM_PROVIDER=anthropic или пусто + ANTHROPIC_API_KEY (Claude)
     """
-    env = os.environ if env is None else env
-    provider = env.get("LLM_PROVIDER", "").strip().lower()
+    raw_env = os.environ if env is None else env
+
+    def clean(v: str) -> str:
+        # частая ошибка при вставке: пробел, перевод строки или кавычки вокруг значения
+        return (v or "").strip().strip("\"'").strip()
+
+    env = {k: clean(raw_env.get(k, "")) for k in (
+        "LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL",
+        "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "ANTHROPIC_API_URL")}
+    provider = env["LLM_PROVIDER"].lower()
     timeout = config.AI_TIMEOUT_S
-    key = env.get("LLM_API_KEY", "")
+    key = env["LLM_API_KEY"]
     if provider == "groq":
         return OpenAICompatClient(key, env.get("LLM_MODEL") or GROQ_DEFAULT_MODEL,
                                   env.get("LLM_BASE_URL") or GROQ_URL, timeout, transport)
@@ -242,8 +264,9 @@ def generate_species(name: str, client: LLMClient) -> dict:
             result["source"] = "llm"
             result["model"] = client.model
             return result
-        except AIError as e:
-            reason, detail = "llm_error", str(e)
+        except Exception as e:  # любой сбой ИИ не должен ронять сайт
+            reason, detail = "llm_error", (str(e) if isinstance(e, AIError) else f"{type(e).__name__}")
+            log.warning("Сбой ИИ (species): %s", e)
     result = fallback_species(name)
     result["fallback_reason"] = reason
     if detail:
@@ -305,7 +328,8 @@ def zone_report(analysis: dict, client: LLMClient) -> dict:
             if len(text) < 40:
                 raise AIBadResponse("Слишком короткий ответ")
             return {"text": text[:1500], "source": "llm", "model": client.model}
-        except AIError as e:
-            return {"text": template_report(analysis), "source": "template",
-                    "fallback_reason": "llm_error", "fallback_detail": str(e)}
+        except Exception as e:
+            log.warning("Сбой ИИ (zone_report): %s", e)
+            return {"text": template_report(analysis), "source": "template", "fallback_reason": "llm_error",
+                    "fallback_detail": str(e) if isinstance(e, AIError) else type(e).__name__}
     return {"text": template_report(analysis), "source": "template", "fallback_reason": "no_key"}

@@ -6,9 +6,11 @@ from typing import List, Literal, Optional, Tuple
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+import logging
 import os
 
 import ai
@@ -33,6 +35,7 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 
+log = logging.getLogger("uvicorn.error")
 llm = ai.make_client()
 ai_limiter = RateLimiter(config.AI_RATE_LIMIT_PER_MIN)
 COST = CostModel.from_env()
@@ -178,6 +181,25 @@ def _analyze(req: "ZoneRequest") -> dict:
 
 
 # ---------- Эндпоинты ----------
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception):
+    log.exception("Необработанная ошибка: %s", request.url.path)
+    return JSONResponse(status_code=500, content={
+        "detail": "Внутренняя ошибка сервера. Подробности — в журнале (Logs) сервиса на Render."})
+
+
+@app.get("/api/v1/ai/status", dependencies=[Depends(ai_guard)])
+def ai_status():
+    """Диагностика: делает крошечный запрос к ИИ и показывает результат или причину сбоя (ключ не показывается)."""
+    if not llm.available:
+        return {"ok": False, "model": None, "error": "Ключ API не задан на сервере"}
+    try:
+        text = llm.complete("Отвечай одним словом.", "Скажи: ок", 20)
+        return {"ok": True, "model": llm.model, "reply": text.strip()[:80]}
+    except Exception as e:
+        return {"ok": False, "model": llm.model, "error": str(e) if isinstance(e, ai.AIError) else type(e).__name__}
+
+
 @app.get("/api/v1/health")
 def health():
     return {"status": "ok", "ai_available": llm.available, "ai_model": llm.model if llm.available else None,

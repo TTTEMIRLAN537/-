@@ -315,6 +315,54 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(r2["source"], "template")
 
 
+class RobustnessTests(unittest.TestCase):
+    def test_key_with_whitespace_and_quotes_is_cleaned(self):
+        c = ai.make_client({"LLM_PROVIDER": " Groq ", "LLM_API_KEY": ' "gsk_abc"\n'})
+        self.assertEqual(c.api_key, "gsk_abc")
+        self.assertTrue(c.available)
+        self.assertFalse(ai.make_client({"LLM_PROVIDER": "groq", "LLM_API_KEY": " \n"}).available)
+
+    def test_transport_exceptions_never_escape(self):
+        import http.client
+
+        def boom(exc):
+            def t(url, headers, body, timeout):
+                raise exc
+            return t
+
+        for exc in (ValueError("Invalid header value"), UnicodeEncodeError("latin-1", "я", 0, 1, "x"),
+                    http.client.IncompleteRead(b"x"), RuntimeError("странно")):
+            c = ai.make_client({"LLM_PROVIDER": "groq", "LLM_API_KEY": "k"}, transport=boom(exc))
+            r = ai.generate_species("Дуб", c)
+            self.assertEqual((r["source"], r["fallback_reason"]), ("rules", "llm_error"))
+            a = analysis.analyze_zone(zone(), [], COST, TARGETS)
+            self.assertEqual(ai.zone_report(a, c)["source"], "template")
+
+    def test_unhashable_values_from_model_do_not_crash(self):
+        weird = json.dumps({"kind": ["tree"], "type": "x_y", "icon": "🌳", "color": "#112233", "hardiness": {"a": 1}})
+        c = ai.make_client({"LLM_PROVIDER": "groq", "LLM_API_KEY": "k"},
+                           transport=fake_transport(200, {"choices": [{"message": {"content": weird}}]}))
+        self.assertEqual(ai.generate_species("Дуб", c)["source"], "rules")
+
+
+class SecretLeakTests(unittest.TestCase):
+    def test_api_key_never_appears_in_error_details(self):
+        secret = "gsk_TOPSECRET123"
+
+        def leaky(url, headers, body, timeout):
+            raise ValueError(f"Invalid header value b'Bearer {secret}'")  # так выглядит ошибка http.client
+
+        c = ai.make_client({"LLM_PROVIDER": "groq", "LLM_API_KEY": secret}, transport=leaky)
+        r = ai.generate_species("Дуб", c)
+        self.assertEqual(r["source"], "rules")
+        self.assertNotIn(secret, json.dumps(r, ensure_ascii=False))
+        rep = ai.zone_report(analysis.analyze_zone(zone(), [], COST, TARGETS), c)
+        self.assertNotIn(secret, json.dumps(rep, ensure_ascii=False))
+        with self.assertRaises(ai.AIUnavailable) as ctx:
+            c.complete("s", "u")
+        self.assertNotIn(secret, str(ctx.exception))
+
+
 class RateLimitTests(unittest.TestCase):
     def test_window(self):
         rl = RateLimiter(2, 60)
