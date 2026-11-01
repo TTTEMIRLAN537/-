@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { PavlodarMap } from './PavlodarMap';
 import { ZoneDetail } from './components/ZoneDetail';
 import { ZoneFormModal, ZoneFormValues } from './components/ZoneFormModal';
-import { ApiError, Health, ScanResponse, SpeciesResponse, StoredState, ZoneAnalysis, ZoneReportResponse, generateSpecies, getHealth, getState, putState, scanZones, zoneReport } from './api';
+import { ApiError, AutoDetectResponse, Health, ProblemDetection, ScanResponse, SpeciesResponse, StoredState, ZoneAnalysis, ZoneReportResponse, autoDetectProblems, generateSpecies, getHealth, getState, putState, scanZones, zoneReport } from './api';
 import { countPlacedInZone } from './geo';
 import { DEFAULT_PALETTE, kindFromType, loadJSON, normalizeZones, offlineModel, sanitizeState, saveJSON } from './items';
 import { CATEGORY_META, INITIAL_ZONES } from './zones';
@@ -183,6 +183,55 @@ const App = () => {
     const t = setTimeout(runScan, 500);
     return () => clearTimeout(t);
   }, [runScan]);
+
+  // --- ИИ авто-обнаружение проблем ---
+  const [autoDetect, setAutoDetect] = useState<AutoDetectResponse | null>(null);
+  const [autoDetectState, setAutoDetectState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [autoDetectError, setAutoDetectError] = useState('');
+
+  const runAutoDetect = useCallback(async () => {
+    if (boot !== 'ready') return;
+    setAutoDetectState('loading');
+    setAutoDetect(null);
+    setAutoDetectError('');
+    try {
+      const res = await autoDetectProblems(zones, placedItems);
+      setAutoDetect(res);
+      setAutoDetectState('idle');
+    } catch (e) {
+      setAutoDetectState('error');
+      setAutoDetectError(e instanceof ApiError ? e.message : 'Не удалось выполнить ИИ-анализ');
+    }
+  }, [boot, zones, placedItems]);
+
+  const addDetectedZone = useCallback((problem: ProblemDetection) => {
+    // Находим исходную зону, чтобы взять её координаты как основу
+    const sourceZone = zones.find((z) => z.id === problem.zone_id);
+    if (!sourceZone) return;
+    // Создаём новую проблемную зону рядом (небольшой сдвиг, чтобы не накладывались)
+    const coords = sourceZone.coordinates;
+    // Вычисляем центр
+    const cx = coords.reduce((s, c) => s + c[0], 0) / coords.length;
+    const cy = coords.reduce((s, c) => s + c[1], 0) / coords.length;
+    // Уменьшаем до 70% от исходного, чтобы была видна как отдельная зона
+    const scaled: [number, number][] = coords.map(([lng, lat]) => [
+      cx + (lng - cx) * 0.7,
+      cy + (lat - cy) * 0.7,
+    ]);
+    // Замыкаем контур
+    const ring: [number, number][] = [...scaled.slice(0, -1), scaled[0]];
+    const newZone = {
+      id: 'z_ai_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      name: problem.suggested_zone_name || `Проблемная зона: ${sourceZone.name}`,
+      category: 'problem' as const,
+      color: '#ef4444',
+      coordinates: ring,
+      details: { trees: sourceZone.details.trees || 0, benches: 0, bins: 0,
+        desc: problem.description },
+    };
+    setZones((prev) => [...prev, newZone]);
+    openZone(newZone);
+  }, [zones]);
 
   // --- Заключение по зоне (ИИ) ---
   const [report, setReport] = useState<ZoneReportResponse | null>(null);
@@ -602,6 +651,84 @@ const App = () => {
                   Расчёт по площади контура и числу деревьев в сравнении с целевой плотностью. Это арифметика, а не анализ снимков:
                   спутниковые данные (NDVI) не используются.
                 </p>
+
+                {/* ИИ авто-обнаружение проблем */}
+                <div style={{ marginBottom: '14px', borderRadius: '8px', border: '1px solid #ddd6fe', backgroundColor: '#faf5ff', padding: '10px 12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#6d28d9' }}>🤖 ИИ-анализ проблем</span>
+                    <button
+                      onClick={runAutoDetect}
+                      disabled={autoDetectState === 'loading'}
+                      style={{
+                        backgroundColor: autoDetectState === 'loading' ? '#a78bfa' : '#7c3aed',
+                        color: '#fff', border: 'none', padding: '5px 12px', borderRadius: '5px',
+                        fontSize: '12px', fontWeight: 'bold', cursor: autoDetectState === 'loading' ? 'default' : 'pointer',
+                        opacity: autoDetectState === 'loading' ? 0.7 : 1,
+                      }}
+                    >
+                      {autoDetectState === 'loading' ? '⏳ Анализирую…' : '🔍 Найти проблемы'}
+                    </button>
+                  </div>
+                  <p style={{ fontSize: '11px', color: '#6d28d9', margin: 0 }}>
+                    ИИ изучит все зоны, найдёт где не хватает деревьев и нет парков поблизости, и предложит создать проблемные зоны.
+                  </p>
+
+                  {autoDetectState === 'error' && (
+                    <div style={{ marginTop: '8px', fontSize: '11px', color: '#991b1b', backgroundColor: '#fef2f2', padding: '6px 8px', borderRadius: '5px' }}>
+                      ⚠️ {autoDetectError}
+                    </div>
+                  )}
+
+                  {autoDetect && (
+                    <div style={{ marginTop: '10px' }}>
+                      <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '6px' }}>
+                        {autoDetect.source === 'llm'
+                          ? `Сформировано ИИ (${autoDetect.model}). Найдено проблем: ${autoDetect.problems.length}`
+                          : `Шаблонный анализ. Найдено проблем: ${autoDetect.problems.length}`}
+                      </div>
+                      {autoDetect.problems.length === 0 && (
+                        <div style={{ fontSize: '12px', color: '#16a34a' }}>✅ ИИ не выявил критических проблем в текущих зонах.</div>
+                      )}
+                      {autoDetect.problems.map((p) => {
+                        const severityColors: Record<string, { bg: string; border: string; badge: string; text: string }> = {
+                          critical: { bg: '#fef2f2', border: '#fca5a5', badge: '#dc2626', text: 'Критично' },
+                          high:     { bg: '#fff7ed', border: '#fed7aa', badge: '#ea580c', text: 'Высокий' },
+                          medium:   { bg: '#fffbeb', border: '#fde68a', badge: '#d97706', text: 'Средний' },
+                        };
+                        const sc = severityColors[p.severity] || severityColors.medium;
+                        return (
+                          <div key={p.zone_id + p.title}
+                            style={{ backgroundColor: sc.bg, border: `1px solid ${sc.border}`, borderRadius: '7px', padding: '10px 12px', marginBottom: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', marginBottom: '4px' }}>
+                              <div>
+                                <span style={{ backgroundColor: sc.badge, color: '#fff', fontSize: '10px', fontWeight: 'bold', padding: '1px 6px', borderRadius: '4px', marginRight: '6px' }}>{sc.text}</span>
+                                <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#1e293b' }}>{p.title}</span>
+                              </div>
+                            </div>
+                            <div style={{ fontSize: '11px', color: '#475569', marginBottom: '8px', lineHeight: '1.5' }}>{p.description}</div>
+                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                              <button
+                                onClick={() => { const z = zones.find((x) => x.id === p.zone_id); if (z) openZone(z); }}
+                                style={{ fontSize: '11px', padding: '4px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', backgroundColor: '#fff', cursor: 'pointer' }}
+                              >
+                                📍 Открыть зону
+                              </button>
+                              {canEdit && (
+                                <button
+                                  onClick={() => addDetectedZone(p)}
+                                  style={{ fontSize: '11px', padding: '4px 8px', borderRadius: '4px', border: 'none', backgroundColor: '#dc2626', color: '#fff', cursor: 'pointer', fontWeight: 'bold' }}
+                                >
+                                  ＋ Обвести как проблемную
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
                 {scanState === 'loading' && <div style={{ fontSize: '12px' }}>⏳ Считаю…</div>}
                 {Object.values(analyses)
                   .filter((a) => a.deficit_trees !== null)
