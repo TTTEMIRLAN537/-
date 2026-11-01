@@ -271,6 +271,15 @@ def ai_species(req: SpeciesRequest):
         raise HTTPException(status_code=422, detail=str(e))
 
 
+@app.post("/api/v1/ai/auto-detect-problems", dependencies=[Depends(ai_guard)])
+def ai_auto_detect_problems(req: ScanRequest):
+    """ИИ анализирует все зоны и находит районы с наибольшими проблемами озеленения."""
+    zones_list = [_dump(z) for z in req.zones]
+    items_list = [_dump(i) for i in req.placed_items]
+    scan = analysis.scan_zones(zones_list, items_list, COST)
+    return ai.auto_detect_problems(scan["results"], llm)
+
+
 @app.post("/api/v1/ai/zone-report", dependencies=[Depends(ai_guard)])
 def ai_zone_report(req: ZoneRequest):
     try:
