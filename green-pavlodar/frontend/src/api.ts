@@ -73,6 +73,22 @@ export interface ZoneReportResponse {
   fallback_detail?: string;
 }
 
+export interface ProblemDetection {
+  zone_id: string;
+  title: string;
+  description: string;
+  severity: 'critical' | 'high' | 'medium';
+  suggested_zone_name: string;
+}
+
+export interface AutoDetectResponse {
+  problems: ProblemDetection[];
+  source: 'llm' | 'template';
+  model?: string;
+  fallback_reason?: 'no_key' | 'llm_error';
+  fallback_detail?: string;
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status = 0) {
@@ -145,6 +161,10 @@ const itemsPayload = (items: PlacedItem[]) => items.map(({ id, type, kind, lat, 
 
 export const scanZones = (zones: ZoneData[], items: PlacedItem[]) =>
   request<ScanResponse>('/api/v1/scan', { zones: zones.map(zonePayload), placed_items: itemsPayload(items) });
+
+export const autoDetectProblems = (zones: ZoneData[], items: PlacedItem[]) =>
+  request<AutoDetectResponse>('/api/v1/ai/auto-detect-problems',
+    { zones: zones.map(zonePayload), placed_items: itemsPayload(items) }, 45000);
 
 // ИИ-запросы могут занимать до ~25 с на стороне сервера
 export const generateSpecies = (name: string) =>
